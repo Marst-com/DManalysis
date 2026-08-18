@@ -27,7 +27,12 @@ async function init() {
     case 'firebase': {
       const FirebaseAdapter = require('./firebase/FirebaseAdapter');
       _adapter = new FirebaseAdapter();
-      await _adapter.connect();
+      try {
+        await _adapter.connect();
+      } catch (err) {
+        console.error('[DatabaseRegistry] Firebase connection failed:', err.message);
+        throw err;
+      }
       logger.info('Database adapter: Firebase');
       break;
     }
