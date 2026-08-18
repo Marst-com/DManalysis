@@ -1,0 +1,58 @@
+services:
+  - type: web
+    name: duomarst-analytics-api
+    env: node
+    region: singapore
+    plan: starter
+    buildCommand: npm install
+    startCommand: node src/index.js
+    healthCheckPath: /health
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # ── Required secrets (set in Render dashboard, never commit) ──
+      - key: JWT_SECRET
+        generateValue: false   # set manually — must be 64+ random chars
+
+      - key: SECRET_ENCRYPTION_KEY
+        generateValue: false   # 64 hex chars — openssl rand -hex 32
+
+      - key: ALLOWED_ORIGINS
+        value: https://YOUR_VERCEL_APP.vercel.app  # update after Vercel deploy
+
+      - key: DB_ADAPTER
+        value: firebase        # or supabase
+
+      # ── Firebase (if DB_ADAPTER=firebase) ──
+      - key: FIREBASE_PROJECT_ID
+        generateValue: false
+
+      - key: FIREBASE_CLIENT_EMAIL
+        generateValue: false
+
+      - key: FIREBASE_PRIVATE_KEY
+        generateValue: false
+
+      # ── Supabase (if DB_ADAPTER=supabase) ──
+      - key: SUPABASE_URL
+        generateValue: false
+
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        generateValue: false
+
+      # ── Optional ──
+      - key: WEBHOOK_SECRET
+        generateValue: false
+
+      - key: AI_PROVIDER
+        value: gemini          # or openai
+
+      - key: AI_PROVIDER_API_KEY
+        generateValue: false
+
+      - key: PORT
+        value: 4000
+
+    autoDeploy: true
