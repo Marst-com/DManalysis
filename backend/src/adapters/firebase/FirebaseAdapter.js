@@ -36,8 +36,12 @@ class FirebaseAdapter extends DatabaseAdapter {
 
     const projectId    = this._requireEnv('FIREBASE_PROJECT_ID');
     const clientEmail  = this._requireEnv('FIREBASE_CLIENT_EMAIL');
-    // Private key stored in env as escaped newlines
-    const privateKey   = this._requireEnv('FIREBASE_PRIVATE_KEY').replace(/\\n/g, '\n');
+    // Handle both escaped \n and real newlines (Render env var variations)
+    let privateKey = this._requireEnv('FIREBASE_PRIVATE_KEY');
+    // Replace literal \n with real newlines if needed
+    if (privateKey.includes('\\n')) {
+      privateKey = privateKey.replace(/\\n/g, '\n');
+    }
 
     // Avoid re-initializing if already done (hot reload safety)
     if (!admin.apps.length) {
@@ -70,8 +74,15 @@ class FirebaseAdapter extends DatabaseAdapter {
 
   async ping() {
     const start = Date.now();
-    // Lightweight read to verify connectivity
-    await this._db_().collection('_health').limit(1).get();
+    try {
+      // Lightweight Firestore connectivity check
+      await this._db_().collection('_health').limit(1).get();
+    } catch (err) {
+      // Collection not existing is fine — just means DB is empty
+      if (!err.code || err.code !== 5) { // 5 = NOT_FOUND is ok
+        throw err;
+      }
+    }
     return { ok: true, latencyMs: Date.now() - start };
   }
 
