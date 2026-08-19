@@ -5,20 +5,6 @@ const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const logger = require('../../utils/logger');
 
-/**
- * FirebaseAdapter — implements DatabaseAdapter using Firestore.
- *
- * Firestore collection layout:
- *   users/{userId}
- *   sites/{siteId}
- *   siteAccess/{userId_siteId}
- *   apiKeys/{keyHash}
- *   events/{siteId}/records/{eventId}
- *
- * Credentials: loaded from environment variables ONLY.
- * firebase-admin is initialized once and reused.
- */
-
 class FirebaseAdapter extends DatabaseAdapter {
   constructor() {
     super();
@@ -26,36 +12,26 @@ class FirebaseAdapter extends DatabaseAdapter {
     this._admin = null;
   }
 
-  /**
-   * Initialize firebase-admin from env vars.
-   * Called once at startup via DatabaseRegistry.
-   * Throws if required env vars are missing.
-   */
   async connect() {
     const admin = require('firebase-admin');
 
-    const projectId    = this._requireEnv('FIREBASE_PROJECT_ID');
-    const clientEmail  = this._requireEnv('FIREBASE_CLIENT_EMAIL');
-    // Handle both escaped \n and real newlines (Render env var variations)
-    let privateKey = this._requireEnv('FIREBASE_PRIVATE_KEY');
-    // Replace literal \n with real newlines if needed
+    const projectId   = this._requireEnv('FIREBASE_PROJECT_ID');
+    const clientEmail = this._requireEnv('FIREBASE_CLIENT_EMAIL');
+    let privateKey    = this._requireEnv('FIREBASE_PRIVATE_KEY');
     if (privateKey.includes('\\n')) {
       privateKey = privateKey.replace(/\\n/g, '\n');
     }
 
-    // Avoid re-initializing if already done (hot reload safety)
     if (!admin.apps.length) {
       admin.initializeApp({
         credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
-        // databaseURL only needed for Realtime Database, not Firestore
       });
     }
 
     this._admin = admin;
-    this._db = admin.firestore();
+    this._db    = admin.firestore();
 
-    // Verify connection
-    await this.ping();
+    // ping 없이 연결 완료 — Firestore는 lazy connect라 ping 불필요
     logger.info('FirebaseAdapter connected', { projectId });
   }
 
@@ -70,18 +46,13 @@ class FirebaseAdapter extends DatabaseAdapter {
     return this._db;
   }
 
-  // ─── Health ──────────────────────────────────────────────────────────────
-
   async ping() {
+    if (!this._db) return { ok: false, latencyMs: 0 };
     const start = Date.now();
     try {
-      // Lightweight Firestore connectivity check
-      await this._db_().collection('_health').limit(1).get();
-    } catch (err) {
-      // Collection not existing is fine — just means DB is empty
-      if (!err.code || err.code !== 5) { // 5 = NOT_FOUND is ok
-        throw err;
-      }
+      await this._db.collection('_health').limit(1).get();
+    } catch {
+      // 컬렉션 없어도 연결은 된 것
     }
     return { ok: true, latencyMs: Date.now() - start };
   }
@@ -96,10 +67,7 @@ class FirebaseAdapter extends DatabaseAdapter {
   }
 
   async findUserByEmail(email) {
-    const snap = await this._db_().collection('users')
-      .where('email', '==', email.toLowerCase().trim())
-      .limit(1)
-      .get();
+    const snap = await this._db_().collection('users').where('email', '==', email.toLowerCase().trim()).limit(1).get();
     if (snap.empty) return null;
     return snap.docs[0].data();
   }
@@ -110,10 +78,7 @@ class FirebaseAdapter extends DatabaseAdapter {
   }
 
   async updateUserRefreshToken(id, hash) {
-    await this._db_().collection('users').doc(id).update({
-      refreshTokenHash: hash,
-      updatedAt: new Date().toISOString(),
-    });
+    await this._db_().collection('users').doc(id).update({ refreshTokenHash: hash, updatedAt: new Date().toISOString() });
   }
 
   _sanitizeUser(user) {
@@ -124,15 +89,11 @@ class FirebaseAdapter extends DatabaseAdapter {
   // ─── Sites ───────────────────────────────────────────────────────────────
 
   async createSite({ id, name, slug, domain, ownerId }) {
-    // Check slug uniqueness
     const existing = await this.getSiteBySlug(slug);
     if (existing) throw Object.assign(new Error('Slug already in use.'), { status: 409 });
-
     const now = new Date().toISOString();
     const site = { id, name, slug, domain: domain || '', ownerId, active: true, createdAt: now, updatedAt: now };
     await this._db_().collection('sites').doc(id).set(site);
-
-    // Auto-grant OWNER access
     await this.grantSiteAccess({ userId: ownerId, siteId: id, role: 'OWNER' });
     return site;
   }
@@ -143,41 +104,27 @@ class FirebaseAdapter extends DatabaseAdapter {
   }
 
   async getSiteBySlug(slug) {
-    const snap = await this._db_().collection('sites')
-      .where('slug', '==', slug)
-      .limit(1)
-      .get();
+    const snap = await this._db_().collection('sites').where('slug', '==', slug).limit(1).get();
     return snap.empty ? null : snap.docs[0].data();
   }
 
   async getUserSites(userId) {
-    // Get all access records for this user
-    const snap = await this._db_().collection('siteAccess')
-      .where('userId', '==', userId)
-      .get();
+    const snap = await this._db_().collection('siteAccess').where('userId', '==', userId).get();
     if (snap.empty) return [];
-
-    // Fetch each site
-    const siteIds = snap.docs.map((d) => d.data().siteId);
-    const roleMap = Object.fromEntries(snap.docs.map((d) => [d.data().siteId, d.data().role]));
-
-    // Firestore 'in' query: max 30 items per query
+    const siteIds = snap.docs.map(d => d.data().siteId);
+    const roleMap = Object.fromEntries(snap.docs.map(d => [d.data().siteId, d.data().role]));
     const results = [];
     for (let i = 0; i < siteIds.length; i += 30) {
       const chunk = siteIds.slice(i, i + 30);
-      const sitesSnap = await this._db_().collection('sites')
-        .where('id', 'in', chunk)
-        .get();
-      sitesSnap.docs.forEach((d) => {
-        results.push({ ...d.data(), accessRole: roleMap[d.data().id] });
-      });
+      const sitesSnap = await this._db_().collection('sites').where('id', 'in', chunk).get();
+      sitesSnap.docs.forEach(d => results.push({ ...d.data(), accessRole: roleMap[d.data().id] }));
     }
     return results;
   }
 
   async updateSite(id, patch) {
     const allowed = {};
-    if (patch.name !== undefined)   allowed.name = patch.name;
+    if (patch.name   !== undefined) allowed.name   = patch.name;
     if (patch.domain !== undefined) allowed.domain = patch.domain;
     if (patch.active !== undefined) allowed.active = patch.active;
     allowed.updatedAt = new Date().toISOString();
@@ -189,15 +136,10 @@ class FirebaseAdapter extends DatabaseAdapter {
     const db = this._db_();
     const batch = db.batch();
     batch.delete(db.collection('sites').doc(id));
-
-    // Cascade: access records
     const accessSnap = await db.collection('siteAccess').where('siteId', '==', id).get();
-    accessSnap.docs.forEach((d) => batch.delete(d.ref));
-
-    // Cascade: api keys
+    accessSnap.docs.forEach(d => batch.delete(d.ref));
     const keySnap = await db.collection('apiKeys').where('siteId', '==', id).get();
-    keySnap.docs.forEach((d) => batch.delete(d.ref));
-
+    keySnap.docs.forEach(d => batch.delete(d.ref));
     await batch.commit();
     return true;
   }
@@ -223,7 +165,7 @@ class FirebaseAdapter extends DatabaseAdapter {
 
   async getSiteMembers(siteId) {
     const snap = await this._db_().collection('siteAccess').where('siteId', '==', siteId).get();
-    return snap.docs.map((d) => d.data());
+    return snap.docs.map(d => d.data());
   }
 
   // ─── API Keys ─────────────────────────────────────────────────────────────
@@ -233,12 +175,8 @@ class FirebaseAdapter extends DatabaseAdapter {
     const hash = crypto.createHash('sha256').update(raw).digest('hex');
     const id = uuidv4();
     const now = new Date().toISOString();
-    const expiresAt = expiresInDays
-      ? new Date(Date.now() + expiresInDays * 86400000).toISOString()
-      : null;
-
+    const expiresAt = expiresInDays ? new Date(Date.now() + expiresInDays * 86400000).toISOString() : null;
     const record = { id, siteId, keyHash: hash, label: label || 'Default', active: true, createdAt: now, expiresAt };
-    // Store by hash as doc ID for O(1) lookup
     await this._db_().collection('apiKeys').doc(hash).set(record);
     return { rawKey: raw, record: this._sanitizeKey(record) };
   }
@@ -247,31 +185,23 @@ class FirebaseAdapter extends DatabaseAdapter {
     const hash = crypto.createHash('sha256').update(rawKey).digest('hex');
     const doc = await this._db_().collection('apiKeys').doc(hash).get();
     if (!doc.exists) return null;
-
     const keyRecord = doc.data();
     if (!keyRecord.active) return null;
     if (keyRecord.expiresAt && new Date(keyRecord.expiresAt) < new Date()) return null;
-
     const site = await this.getSiteById(keyRecord.siteId);
     return site && site.active ? { ...site, keyId: keyRecord.id } : null;
   }
 
   async revokeApiKey(keyId, siteId) {
-    const snap = await this._db_().collection('apiKeys')
-      .where('id', '==', keyId)
-      .where('siteId', '==', siteId)
-      .limit(1)
-      .get();
+    const snap = await this._db_().collection('apiKeys').where('id', '==', keyId).where('siteId', '==', siteId).limit(1).get();
     if (snap.empty) return false;
     await snap.docs[0].ref.update({ active: false });
     return true;
   }
 
   async getSiteApiKeys(siteId) {
-    const snap = await this._db_().collection('apiKeys')
-      .where('siteId', '==', siteId)
-      .get();
-    return snap.docs.map((d) => this._sanitizeKey(d.data()));
+    const snap = await this._db_().collection('apiKeys').where('siteId', '==', siteId).get();
+    return snap.docs.map(d => this._sanitizeKey(d.data()));
   }
 
   _sanitizeKey(rec) {
@@ -284,107 +214,59 @@ class FirebaseAdapter extends DatabaseAdapter {
   async insertEvent(event) {
     const id = uuidv4();
     const record = { ...event, id, receivedAt: new Date().toISOString() };
-    // Sub-collection per site keeps queries fast and data isolated
-    await this._db_()
-      .collection('events')
-      .doc(event.siteId)
-      .collection('records')
-      .doc(id)
-      .set(record);
+    await this._db_().collection('events').doc(event.siteId).collection('records').doc(id).set(record);
     return record;
   }
 
-  // ─── Analytics Queries ────────────────────────────────────────────────────
+  // ─── Analytics ────────────────────────────────────────────────────────────
 
   async getEvents({ siteId, eventName, from, to, limit = 100 }) {
-    let q = this._db_()
-      .collection('events').doc(siteId).collection('records')
-      .orderBy('timestamp', 'desc')
-      .limit(Math.min(limit, 1000));
-
+    let q = this._db_().collection('events').doc(siteId).collection('records').orderBy('timestamp', 'desc').limit(Math.min(limit, 1000));
     if (eventName) q = q.where('eventName', '==', eventName);
     if (from) q = q.where('timestamp', '>=', from);
-    if (to) q = q.where('timestamp', '<=', to);
-
+    if (to)   q = q.where('timestamp', '<=', to);
     const snap = await q.get();
-    return snap.docs.map((d) => d.data());
+    return snap.docs.map(d => d.data());
   }
 
   async getVisitorTimeSeries(siteId, fromMs, toMs) {
-    const snap = await this._db_()
-      .collection('events').doc(siteId).collection('records')
-      .where('timestamp', '>=', fromMs)
-      .where('timestamp', '<=', toMs)
-      .get();
-
+    const snap = await this._db_().collection('events').doc(siteId).collection('records').where('timestamp', '>=', fromMs).where('timestamp', '<=', toMs).get();
     const buckets = {};
-    snap.docs.forEach((d) => {
+    snap.docs.forEach(d => {
       const ts = d.data().timestamp;
       const hour = new Date(Math.floor(ts / 3_600_000) * 3_600_000).toISOString();
       buckets[hour] = (buckets[hour] || 0) + 1;
     });
-
-    return Object.entries(buckets)
-      .map(([hour, count]) => ({ hour, count }))
-      .sort((a, b) => a.hour.localeCompare(b.hour));
+    return Object.entries(buckets).map(([hour, count]) => ({ hour, count })).sort((a, b) => a.hour.localeCompare(b.hour));
   }
 
   async getUniqueSessionCount(siteId, fromMs, toMs) {
-    const snap = await this._db_()
-      .collection('events').doc(siteId).collection('records')
-      .where('timestamp', '>=', fromMs)
-      .where('timestamp', '<=', toMs)
-      .select('sessionId')
-      .get();
-
-    const sessions = new Set(
-      snap.docs.map((d) => d.data().sessionId).filter(Boolean)
-    );
-    return sessions.size;
+    const snap = await this._db_().collection('events').doc(siteId).collection('records').where('timestamp', '>=', fromMs).where('timestamp', '<=', toMs).select('sessionId').get();
+    return new Set(snap.docs.map(d => d.data().sessionId).filter(Boolean)).size;
   }
 
   async getEventCounts(siteId, fromMs, toMs) {
-    const snap = await this._db_()
-      .collection('events').doc(siteId).collection('records')
-      .where('timestamp', '>=', fromMs)
-      .where('timestamp', '<=', toMs)
-      .select('eventName')
-      .get();
-
+    const snap = await this._db_().collection('events').doc(siteId).collection('records').where('timestamp', '>=', fromMs).where('timestamp', '<=', toMs).select('eventName').get();
     const counts = {};
-    snap.docs.forEach((d) => {
-      const name = d.data().eventName;
-      counts[name] = (counts[name] || 0) + 1;
-    });
+    snap.docs.forEach(d => { const n = d.data().eventName; counts[n] = (counts[n] || 0) + 1; });
     return counts;
   }
 
   async getTotalEventCount(siteId) {
-    // Firestore doesn't have cheap COUNT — use aggregation query (v9.4+)
     try {
-      const snap = await this._db_()
-        .collection('events').doc(siteId).collection('records')
-        .count()
-        .get();
+      const snap = await this._db_().collection('events').doc(siteId).collection('records').count().get();
       return snap.data().count;
     } catch {
-      // Fallback for older SDK versions
-      const snap = await this._db_()
-        .collection('events').doc(siteId).collection('records')
-        .select()
-        .get();
+      const snap = await this._db_().collection('events').doc(siteId).collection('records').select().get();
       return snap.size;
     }
   }
 }
 
-module.exports = FirebaseAdapter;
-
-// Allow connecting with explicit credentials (for per-site adapters)
-// instead of reading from process.env
+// connectWithCredentials — 사이트별 독립 DB용
 FirebaseAdapter.prototype.connectWithCredentials = async function(credentials) {
   const admin = require('firebase-admin');
-  const appName = `site-${require('crypto').randomBytes(4).toString('hex')}`;
+  const appName = `site-${crypto.randomBytes(4).toString('hex')}`;
   if (!admin.apps.find(a => a?.name === appName)) {
     admin.initializeApp({
       credential: admin.credential.cert({
@@ -396,6 +278,7 @@ FirebaseAdapter.prototype.connectWithCredentials = async function(credentials) {
   }
   const app = admin.app(appName);
   this._admin = admin;
-  this._db = app.firestore();
-  await this.ping();
+  this._db    = app.firestore();
 };
+
+module.exports = FirebaseAdapter;
