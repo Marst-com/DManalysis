@@ -27,6 +27,14 @@ async function init() {
     case 'firebase': {
       const FirebaseAdapter = require('./firebase/FirebaseAdapter');
       _adapter = new FirebaseAdapter();
+
+      const pk = process.env.FIREBASE_PRIVATE_KEY || '';
+      console.log('[DEBUG] PROJECT_ID:', process.env.FIREBASE_PROJECT_ID);
+      console.log('[DEBUG] PK length:', pk.length);
+      console.log('[DEBUG] PK starts:', pk.slice(0, 27));
+      console.log('[DEBUG] has real newline:', pk.includes('\n'));
+      console.log('[DEBUG] has escaped newline:', pk.includes('\\n'));
+
       try {
         await _adapter.connect();
       } catch (err) {
