@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Settings, Shield, Key, Lock, FileText, Trash2, Plus, Eye, EyeOff } from 'lucide-react';
-import { useParams, NavLink, Outlet, Routes, Route } from 'react-router-dom';
+import { Settings, Shield, Key, Lock, FileText, Trash2, Plus, Eye, EyeOff, Users, RefreshCw, Copy, Check } from 'lucide-react';
+import { NavLink, Outlet, Navigate } from 'react-router-dom';
 import { useSite } from '../../context/SiteContext';
 import { useApi } from '../../hooks/useApi';
 import { Input, Btn, Badge, Table, LoadingState, ErrorState, Modal } from '../../components/ui/Common';
@@ -11,6 +11,7 @@ export function SettingsLayout() {
   const nav = [
     { to: '/settings/general', label: 'General', icon: Settings },
     { to: '/settings/security', label: 'Security', icon: Shield },
+    { to: '/settings/team', label: '팀 & 초대', icon: Users },
     { to: '/settings/api-keys', label: 'API Keys', icon: Key },
     { to: '/settings/secrets', label: 'Secrets', icon: Lock },
     { to: '/settings/audit-logs', label: 'Audit Logs', icon: FileText },
@@ -21,11 +22,11 @@ export function SettingsLayout() {
         <h1 className="text-xl font-semibold text-white">Settings</h1>
         <p className="text-sm text-slate-400 mt-0.5">플랫폼 및 사이트 설정</p>
       </div>
-      <div className="flex gap-1 border-b border-white/10 pb-0 -mb-2">
+      <div className="flex gap-1 border-b border-white/10 pb-0 -mb-2 overflow-x-auto">
         {nav.map((n) => (
           <NavLink key={n.to} to={n.to}
             className={({ isActive }) =>
-              `flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors -mb-px ${
+              `flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors -mb-px whitespace-nowrap ${
                 isActive ? 'text-indigo-400 border-indigo-500' : 'text-slate-500 border-transparent hover:text-slate-300'
               }`
             }
@@ -61,10 +62,10 @@ export function GeneralSettings() {
   return (
     <div className="space-y-6 max-w-lg">
       <div className="bg-[#1e2235] border border-white/10 rounded-xl p-5 space-y-4">
-        <h2 className="text-sm font-medium text-white">사이트 정보</h2>
+        <h2 className="text-sm font-medium text-white">그룹(사이트) 정보</h2>
         {current ? (
           <>
-            <Input label="사이트 이름" value={name} onChange={(e) => setName(e.target.value)} />
+            <Input label="그룹 이름" value={name} onChange={(e) => setName(e.target.value)} />
             <div>
               <label className="block text-xs text-slate-400 mb-1.5">슬러그</label>
               <div className="text-sm text-slate-500 bg-white/3 border border-white/5 rounded-lg px-3 py-2.5">
@@ -74,7 +75,7 @@ export function GeneralSettings() {
             <Input label="도메인" placeholder="games.example.com" value={domain} onChange={(e) => setDomain(e.target.value)} />
             <Btn onClick={save} loading={saving}>{saved ? '✓ 저장됨' : '저장'}</Btn>
           </>
-        ) : <p className="text-slate-500 text-sm">사이트를 선택하세요.</p>}
+        ) : <p className="text-slate-500 text-sm">그룹을 선택하세요.</p>}
       </div>
     </div>
   );
@@ -103,6 +104,137 @@ export function SecuritySettings() {
             </div>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Team & Invite ───────────────────────────────────────────────────────────
+export function TeamSettings() {
+  const { current } = useSite();
+  const { data: membersData, loading, error, refetch } = useApi(
+    current ? `/sites/${current.id}/members` : null, [current?.id]
+  );
+  const [inviteCode, setInviteCode] = useState(null);
+  const [loadingCode, setLoadingCode] = useState(false);
+  const [rotating, setRotating] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const members = membersData?.members || [];
+
+  async function loadInviteCode() {
+    if (!current) return;
+    setLoadingCode(true);
+    try {
+      const res = await api.get(`/auth/group/${current.id}/invite`);
+      setInviteCode(res.inviteCode);
+    } catch (e) { alert(e.message); }
+    finally { setLoadingCode(false); }
+  }
+
+  async function rotateCode() {
+    if (!confirm('초대코드를 재발급하면 기존 코드는 사용할 수 없습니다. 계속하시겠습니까?')) return;
+    setRotating(true);
+    try {
+      const res = await api.post(`/auth/group/${current.id}/invite/rotate`);
+      setInviteCode(res.inviteCode);
+    } catch (e) { alert(e.message); }
+    finally { setRotating(false); }
+  }
+
+  function copyCode() {
+    if (!inviteCode) return;
+    navigator.clipboard.writeText(inviteCode);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  async function changeMemberRole(userId, role) {
+    try {
+      await api.post(`/sites/${current.id}/members`, { userId, role });
+      refetch();
+    } catch (e) { alert(e.message); }
+  }
+
+  async function removeMember(userId) {
+    if (!confirm('이 멤버를 그룹에서 제거하시겠습니까?')) return;
+    try {
+      await api.delete(`/sites/${current.id}/members/${userId}`);
+      refetch();
+    } catch (e) { alert(e.message); }
+  }
+
+  const roleColors = { OWNER: 'indigo', ADMIN: 'violet', ANALYST: 'amber', VIEWER: 'slate' };
+
+  const memberCols = [
+    { key: 'userId', label: '사용자 ID', render: (r) => <span className="font-mono text-xs text-slate-400">{r.userId.slice(0, 12)}...</span> },
+    { key: 'role', label: '역할', render: (r) => (
+      <select
+        value={r.role}
+        onChange={(e) => changeMemberRole(r.userId, e.target.value)}
+        className="bg-transparent text-xs border-0 focus:outline-none cursor-pointer"
+      >
+        {['OWNER', 'ADMIN', 'ANALYST', 'VIEWER'].map(role => (
+          <option key={role} value={role}>{role}</option>
+        ))}
+      </select>
+    )},
+    { key: 'grantedAt', label: '참여일', render: (r) => new Date(r.grantedAt).toLocaleDateString('ko') },
+    { key: 'actions', label: '', render: (r) => (
+      r.role !== 'OWNER' && (
+        <button onClick={() => removeMember(r.userId)}
+          className="text-xs text-rose-400 hover:text-rose-300 transition-colors">
+          제거
+        </button>
+      )
+    )},
+  ];
+
+  if (!current) return <p className="text-slate-500 text-sm">그룹을 선택하세요.</p>;
+
+  return (
+    <div className="space-y-5 max-w-2xl">
+      {/* 초대코드 */}
+      <div className="bg-[#1e2235] border border-white/10 rounded-xl p-5">
+        <h2 className="text-sm font-medium text-white mb-4">초대코드</h2>
+        <p className="text-xs text-slate-500 mb-4">
+          팀원에게 초대코드를 공유하면 회원가입 후 이 그룹에 자동으로 참여할 수 있습니다.
+        </p>
+
+        {!inviteCode ? (
+          <Btn onClick={loadInviteCode} loading={loadingCode} variant="secondary">
+            <Key size={13} /> 초대코드 확인
+          </Btn>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="flex-1 bg-[#0f1117] border border-white/10 rounded-lg px-4 py-3 font-mono text-lg font-bold text-indigo-300 tracking-[0.3em] text-center">
+                {inviteCode}
+              </div>
+              <button
+                onClick={copyCode}
+                className="p-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-slate-400 hover:text-white transition-colors"
+                title="복사"
+              >
+                {copied ? <Check size={15} className="text-emerald-400" /> : <Copy size={15} />}
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <Btn onClick={rotateCode} loading={rotating} variant="secondary" size="sm">
+                <RefreshCw size={12} /> 재발급
+              </Btn>
+              <span className="text-xs text-slate-600">재발급 시 기존 코드 무효화</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 멤버 목록 */}
+      <div className="bg-[#1e2235] border border-white/10 rounded-xl p-5">
+        <h2 className="text-sm font-medium text-white mb-4">멤버 ({members.length}명)</h2>
+        {loading ? <LoadingState /> : error ? <ErrorState message={error} onRetry={refetch} /> : (
+          <Table cols={memberCols} rows={members} empty="멤버가 없습니다." />
+        )}
       </div>
     </div>
   );
@@ -144,7 +276,7 @@ export function ApiKeysSettings() {
     )},
   ];
 
-  if (!current) return <p className="text-slate-500 text-sm">사이트를 선택하세요.</p>;
+  if (!current) return <p className="text-slate-500 text-sm">그룹을 선택하세요.</p>;
 
   return (
     <div className="space-y-4">
@@ -206,7 +338,7 @@ export function SecretsSettings() {
     )},
   ];
 
-  if (!current) return <p className="text-slate-500 text-sm">사이트를 선택하세요.</p>;
+  if (!current) return <p className="text-slate-500 text-sm">그룹을 선택하세요.</p>;
 
   return (
     <div className="space-y-4">
@@ -261,7 +393,6 @@ export function AuditLogsSettings() {
   );
 
   const entries = data?.entries || [];
-
   const resultColor = { SUCCESS: 'emerald', FAIL: 'rose', WARNING: 'amber' };
 
   const cols = [
@@ -271,7 +402,7 @@ export function AuditLogsSettings() {
     { key: 'actorId', label: '사용자', render: (r) => <span className="text-xs font-mono text-slate-400">{r.actorId?.slice(0, 8) || '—'}...</span> },
   ];
 
-  if (!current) return <p className="text-slate-500 text-sm">사이트를 선택하세요.</p>;
+  if (!current) return <p className="text-slate-500 text-sm">그룹을 선택하세요.</p>;
 
   return (
     <div className="space-y-4">
@@ -279,7 +410,7 @@ export function AuditLogsSettings() {
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-medium text-white">감사 로그</h2>
           <div className="flex gap-2 items-center">
-            <input placeholder="액션 필터 (예: SITE_CREATE)" value={action}
+            <input placeholder="액션 필터 (예: GROUP_JOIN)" value={action}
               onChange={(e) => setAction(e.target.value)}
               className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:outline-none w-48" />
             <Btn size="sm" variant="secondary" onClick={refetch}>적용</Btn>
