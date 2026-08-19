@@ -23,6 +23,8 @@ import {
   ApiKeysSettings, SecretsSettings, AuditLogsSettings
 } from './pages/settings/SettingsPages';
 
+import { useAuth } from './context/AuthContext';
+
 // 온보딩 보호 라우트 — 로그인은 됐지만 그룹 없을 때
 function OnboardingRoute({ children }) {
   const { user, loading } = useAuth();
@@ -30,8 +32,6 @@ function OnboardingRoute({ children }) {
   if (!user) return <Navigate to="/login" replace />;
   return children;
 }
-
-import { useAuth } from './context/AuthContext';
 
 export default function App() {
   return (
