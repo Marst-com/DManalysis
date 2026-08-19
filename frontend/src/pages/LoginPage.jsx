@@ -1,12 +1,11 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { BarChart2, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export default function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
-
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -16,15 +15,11 @@ export default function LoginPage() {
   async function handleSubmit(e) {
     e.preventDefault();
     if (!email.trim() || !password) return;
-
-    setLoading(true);
-    setError('');
-
+    setLoading(true); setError('');
     try {
       await login(email.trim(), password);
       navigate('/');
-    } catch (err) {
-      // Show generic error (don't reveal whether email/password is wrong specifically)
+    } catch {
       setError('이메일 또는 비밀번호를 확인해주세요.');
     } finally {
       setLoading(false);
@@ -34,7 +29,6 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-[#0f1117] flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
-        {/* Logo */}
         <div className="flex items-center gap-2.5 mb-8 justify-center">
           <div className="w-9 h-9 rounded-lg bg-indigo-600 flex items-center justify-center">
             <BarChart2 size={18} className="text-white" />
@@ -45,7 +39,6 @@ export default function LoginPage() {
           </div>
         </div>
 
-        {/* Form */}
         <div className="bg-[#1e2235] border border-white/10 rounded-xl p-6">
           <h1 className="text-sm font-semibold text-white mb-5">로그인</h1>
 
@@ -59,11 +52,8 @@ export default function LoginPage() {
             <div>
               <label className="block text-xs text-slate-400 mb-1.5">이메일</label>
               <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                autoComplete="email"
+                type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+                required autoComplete="email"
                 className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition-colors"
                 placeholder="admin@example.com"
               />
@@ -73,33 +63,34 @@ export default function LoginPage() {
               <label className="block text-xs text-slate-400 mb-1.5">비밀번호</label>
               <div className="relative">
                 <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
+                  type={showPassword ? 'text' : 'password'} value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  required
-                  autoComplete="current-password"
+                  required autoComplete="current-password"
                   className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 pr-10 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition-colors"
                   placeholder="••••••••"
                 />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((s) => !s)}
+                <button type="button" onClick={() => setShowPassword(s => !s)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
-                  aria-label={showPassword ? '비밀번호 숨기기' : '비밀번호 표시'}
-                >
+                  aria-label={showPassword ? '비밀번호 숨기기' : '비밀번호 표시'}>
                   {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
                 </button>
               </div>
             </div>
 
             <button
-              type="submit"
-              disabled={loading}
+              type="submit" disabled={loading}
               className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium py-2.5 rounded-lg transition-colors"
             >
               {loading ? '로그인 중...' : '로그인'}
             </button>
           </form>
+
+          <p className="text-center text-xs text-slate-500 mt-4">
+            계정이 없으신가요?{' '}
+            <Link to="/register" className="text-indigo-400 hover:text-indigo-300 transition-colors">
+              회원가입
+            </Link>
+          </p>
         </div>
       </div>
     </div>
