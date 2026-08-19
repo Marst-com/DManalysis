@@ -61,6 +61,10 @@ async function init() {
       logger.info('Database adapter: Memory (dev mode)');
       break;
     }
+  } catch (err) {
+    console.error('[DatabaseRegistry] Firebase connection failed:', err.message);
+    console.error('[DEBUG] Stack:', err.stack);
+    throw err;
   }
 
   return _adapter;
