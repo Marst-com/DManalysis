@@ -22,7 +22,7 @@ class FirebaseAdapter extends DatabaseAdapter {
       privateKey = privateKey.replace(/\\n/g, '\n');
     }
 
-    if (!admin.apps.length) {
+    if (!admin.apps || !admin.apps.length) {
       admin.initializeApp({
         credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
       });
