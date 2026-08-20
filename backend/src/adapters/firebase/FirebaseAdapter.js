@@ -9,11 +9,11 @@ class FirebaseAdapter extends DatabaseAdapter {
   constructor() {
     super();
     this._db = null;
-    this._admin = null;
   }
 
   async connect() {
-    const admin = require('firebase-admin');
+    const { initializeApp, getApps, cert } = require('firebase-admin/app');
+    const { getFirestore } = require('firebase-admin/firestore');
 
     const projectId   = this._requireEnv('FIREBASE_PROJECT_ID');
     const clientEmail = this._requireEnv('FIREBASE_CLIENT_EMAIL');
@@ -22,16 +22,13 @@ class FirebaseAdapter extends DatabaseAdapter {
       privateKey = privateKey.replace(/\\n/g, '\n');
     }
 
-    if (!admin.apps || !admin.apps.length) {
-      admin.initializeApp({
-        credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
+    if (!getApps().length) {
+      initializeApp({
+        credential: cert({ projectId, clientEmail, privateKey }),
       });
     }
 
-    this._admin = admin;
-    this._db    = admin.firestore();
-
-    // ping 없이 연결 완료 — Firestore는 lazy connect라 ping 불필요
+    this._db = getFirestore();
     logger.info('FirebaseAdapter connected', { projectId });
   }
 
@@ -42,18 +39,14 @@ class FirebaseAdapter extends DatabaseAdapter {
   }
 
   _db_() {
-    if (!this._db) throw new Error('FirebaseAdapter not connected. Call connect() first.');
+    if (!this._db) throw new Error('FirebaseAdapter not connected.');
     return this._db;
   }
 
   async ping() {
     if (!this._db) return { ok: false, latencyMs: 0 };
     const start = Date.now();
-    try {
-      await this._db.collection('_health').limit(1).get();
-    } catch {
-      // 컬렉션 없어도 연결은 된 것
-    }
+    try { await this._db.collection('_health').limit(1).get(); } catch {}
     return { ok: true, latencyMs: Date.now() - start };
   }
 
@@ -68,8 +61,7 @@ class FirebaseAdapter extends DatabaseAdapter {
 
   async findUserByEmail(email) {
     const snap = await this._db_().collection('users').where('email', '==', email.toLowerCase().trim()).limit(1).get();
-    if (snap.empty) return null;
-    return snap.docs[0].data();
+    return snap.empty ? null : snap.docs[0].data();
   }
 
   async findUserById(id) {
@@ -147,9 +139,8 @@ class FirebaseAdapter extends DatabaseAdapter {
   // ─── Site Access ─────────────────────────────────────────────────────────
 
   async grantSiteAccess({ userId, siteId, role }) {
-    const key = `${userId}_${siteId}`;
     const record = { userId, siteId, role, grantedAt: new Date().toISOString() };
-    await this._db_().collection('siteAccess').doc(key).set(record);
+    await this._db_().collection('siteAccess').doc(`${userId}_${siteId}`).set(record);
     return record;
   }
 
@@ -263,22 +254,19 @@ class FirebaseAdapter extends DatabaseAdapter {
   }
 }
 
-// connectWithCredentials — 사이트별 독립 DB용
 FirebaseAdapter.prototype.connectWithCredentials = async function(credentials) {
-  const admin = require('firebase-admin');
+  const { initializeApp, getApp, cert } = require('firebase-admin/app');
+  const { getFirestore } = require('firebase-admin/firestore');
   const appName = `site-${crypto.randomBytes(4).toString('hex')}`;
-  if (!admin.apps.find(a => a?.name === appName)) {
-    admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId:   credentials.projectId,
-        clientEmail: credentials.clientEmail,
-        privateKey:  (credentials.privateKey || '').replace(/\\n/g, '\n'),
-      }),
-    }, appName);
-  }
-  const app = admin.app(appName);
-  this._admin = admin;
-  this._db    = app.firestore();
+  let privateKey = (credentials.privateKey || '').replace(/\\n/g, '\n');
+  initializeApp({
+    credential: cert({
+      projectId:   credentials.projectId,
+      clientEmail: credentials.clientEmail,
+      privateKey,
+    }),
+  }, appName);
+  this._db = getFirestore(getApp(appName));
 };
 
 module.exports = FirebaseAdapter;
