@@ -39,6 +39,7 @@ async function init() {
         await _adapter.connect();
       } catch (err) {
         console.error('[DatabaseRegistry] Firebase connection failed:', err.message);
+        console.error('[DEBUG] Stack:', err.stack);
         throw err;
       }
       logger.info('Database adapter: Firebase');
